@@ -6,25 +6,28 @@ pipeline {
         SONAR_TOKEN = credentials('sonarqube-token')
         IMAGE_NAME = "an619/three-tier-backend"
         IMAGE_TAG = "${BUILD_NUMBER}"
-        // Name of the Docker network we connected Jenkins to
-        NETWORK_NAME = "three-tier-devsecops_default" 
+        NETWORK_NAME = "three-tier-devsecops_default"
     }
 
     stages {
         stage('Checkout scm') {
             steps {
+                echo 'Checking out code from GitHub...'
                 checkout scm
             }
         }
 
         stage('Build') {
             steps {
-                sh 'docker run --rm -v $(pwd)/Application-Code/backend:/app -w /app node:20-alpine npm ci'
+                echo 'Installing backend dependencies...'
+                // Using npm install instead of npm ci to bypass missing lockfile issues
+                sh 'docker run --rm -v $(pwd)/Application-Code/backend:/app -w /app node:20-alpine npm install'
             }
         }
 
         stage('Unit Test') {
             steps {
+                echo 'Running backend unit tests...'
                 sh 'docker run --rm -v $(pwd)/Application-Code/backend:/app -w /app node:20-alpine sh -c "npm test || echo \'No tests configured, passing stage\'"'
             }
         }
@@ -32,7 +35,6 @@ pipeline {
         stage('SonarQube Analysis') {
             steps {
                 echo 'Running SonarQube Analysis...'
-                // We attach the scanner to the SonarQube network so it can find the server
                 sh '''
                     docker run --rm \
                     --network $NETWORK_NAME \
@@ -59,18 +61,21 @@ pipeline {
 
         stage('Copy Artifacts') {
             steps {
+                echo 'Archiving build artifacts...'
                 archiveArtifacts artifacts: 'Application-Code/backend/package-lock.json', fingerprint: true
             }
         }
 
         stage('Docker Build Image') {
             steps {
+                echo 'Building backend Docker Image...'
                 sh 'docker build -t $IMAGE_NAME:$IMAGE_TAG -t $IMAGE_NAME:latest ./Application-Code/backend'
             }
         }
 
         stage('Push to Docker Hub') {
             steps {
+                echo 'Pushing backend image to Docker Hub...'
                 sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
                 sh 'docker push $IMAGE_NAME:$IMAGE_TAG'
                 sh 'docker push $IMAGE_NAME:latest'
@@ -79,6 +84,7 @@ pipeline {
 
         stage('Build on Kubernetes') {
             steps {
+                echo 'Updating Backend deployment in Minikube...'
                 sh 'kubectl set image deployment/backend backend=$IMAGE_NAME:$IMAGE_TAG -n three-tier'
             }
         }
@@ -86,6 +92,7 @@ pipeline {
 
     post {
         always {
+            echo 'Cleaning up Docker credentials...'
             sh 'docker logout'
         }
     }
