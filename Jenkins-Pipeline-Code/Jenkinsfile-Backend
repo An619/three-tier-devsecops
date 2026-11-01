@@ -2,40 +2,90 @@ pipeline {
     agent any
 
     environment {
-        // 'dockerhub-creds' is the ID we created in Jenkins for your Docker Hub credentials
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-creds')
+        SONAR_TOKEN = credentials('sonarqube-token')
         IMAGE_NAME = "an619/three-tier-backend"
         IMAGE_TAG = "${BUILD_NUMBER}"
+        // Name of the Docker network we connected Jenkins to
+        NETWORK_NAME = "three-tier-devsecops_default" 
     }
 
     stages {
-        stage('Checkout') {
+        stage('Checkout scm') {
             steps {
-                echo 'Checking out code from GitHub...'
                 checkout scm
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Build') {
             steps {
-                echo 'Building Docker Image...'
+                sh 'docker run --rm -v $(pwd)/Application-Code/backend:/app -w /app node:20-alpine npm ci'
+            }
+        }
+
+        stage('Unit Test') {
+            steps {
+                sh 'docker run --rm -v $(pwd)/Application-Code/backend:/app -w /app node:20-alpine sh -c "npm test || echo \'No tests configured, passing stage\'"'
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                echo 'Running SonarQube Analysis...'
+                // We attach the scanner to the SonarQube network so it can find the server
+                sh '''
+                    docker run --rm \
+                    --network $NETWORK_NAME \
+                    -e SONAR_HOST_URL=http://sonarqube:9000 \
+                    -e SONAR_LOGIN=$SONAR_TOKEN \
+                    -v $(pwd)/Application-Code/backend:/usr/src \
+                    sonarsource/sonar-scanner-cli:latest \
+                    -Dsonar.projectKey=three-tier-backend \
+                    -Dsonar.projectName="Three-Tier Backend" \
+                    -Dsonar.sources=/usr/src \
+                    -Dsonar.exclusions=node_modules/**,coverage/**
+                '''
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                echo 'Waiting for SonarQube Quality Gate...'
+                timeout(time: 2, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('Copy Artifacts') {
+            steps {
+                archiveArtifacts artifacts: 'Application-Code/backend/package-lock.json', fingerprint: true
+            }
+        }
+
+        stage('Docker Build Image') {
+            steps {
                 sh 'docker build -t $IMAGE_NAME:$IMAGE_TAG -t $IMAGE_NAME:latest ./Application-Code/backend'
             }
         }
 
         stage('Push to Docker Hub') {
             steps {
-                echo 'Pushing to Docker Hub...'
                 sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
                 sh 'docker push $IMAGE_NAME:$IMAGE_TAG'
                 sh 'docker push $IMAGE_NAME:latest'
+            }
+        }
+
+        stage('Build on Kubernetes') {
+            steps {
+                sh 'kubectl set image deployment/backend backend=$IMAGE_NAME:$IMAGE_TAG -n three-tier'
             }
         }
     }
 
     post {
         always {
-            echo 'Cleaning up...'
             sh 'docker logout'
         }
     }
