@@ -3,38 +3,95 @@ pipeline {
 
     environment {
         DOCKERHUB_CREDENTIALS = credentials('dockerhub-creds')
+        SONAR_TOKEN = credentials('sonarqube-token')
         IMAGE_NAME = "an619/three-tier-frontend"
         IMAGE_TAG = "${BUILD_NUMBER}"
+        NETWORK_NAME = "three-tier-devsecops_default" 
     }
 
     stages {
-        stage('Checkout') {
+        stage('Checkout scm') {
             steps {
-                echo 'Checking out code from GitHub...'
                 checkout scm
             }
         }
 
-        stage('Build Docker Image') {
+        stage('Build') {
             steps {
-                echo 'Building Docker Image...'
+                echo 'Installing frontend dependencies...'
+                sh 'docker run --rm -v $(pwd)/Application-Code/frontend:/app -w /app node:20-alpine npm ci'
+            }
+        }
+
+        stage('Unit Test') {
+            steps {
+                echo 'Running React tests...'
+                // CI=true is CRITICAL for React tests so they don't hang in watch mode
+                sh 'docker run --rm -e CI=true -v $(pwd)/Application-Code/frontend:/app -w /app node:20-alpine npm test'
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                echo 'Running SonarQube Analysis...'
+                sh '''
+                    docker run --rm \
+                    --network $NETWORK_NAME \
+                    -e SONAR_HOST_URL=http://sonarqube:9000 \
+                    -e SONAR_LOGIN=$SONAR_TOKEN \
+                    -v $(pwd)/Application-Code/frontend:/usr/src \
+                    sonarsource/sonar-scanner-cli:latest \
+                    -Dsonar.projectKey=three-tier-frontend \
+                    -Dsonar.projectName="Three-Tier Frontend" \
+                    -Dsonar.sources=/usr/src \
+                    -Dsonar.exclusions=node_modules/**,build/**,coverage/**,public/**
+                '''
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                echo 'Waiting for SonarQube Quality Gate...'
+                timeout(time: 2, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+
+        stage('Copy Artifacts') {
+            steps {
+                echo 'Archiving build artifacts...'
+                archiveArtifacts artifacts: 'Application-Code/frontend/package-lock.json', fingerprint: true
+            }
+        }
+
+        stage('Docker Build Image') {
+            steps {
+                echo 'Building frontend Docker Image...'
                 sh 'docker build -t $IMAGE_NAME:$IMAGE_TAG -t $IMAGE_NAME:latest ./Application-Code/frontend'
             }
         }
 
         stage('Push to Docker Hub') {
             steps {
-                echo 'Pushing to Docker Hub...'
+                echo 'Pushing frontend image to Docker Hub...'
                 sh 'echo $DOCKERHUB_CREDENTIALS_PSW | docker login -u $DOCKERHUB_CREDENTIALS_USR --password-stdin'
                 sh 'docker push $IMAGE_NAME:$IMAGE_TAG'
                 sh 'docker push $IMAGE_NAME:latest'
+            }
+        }
+
+        stage('Build on Kubernetes') {
+            steps {
+                echo 'Updating Frontend deployment in Minikube...'
+                sh 'kubectl set image deployment/frontend frontend=$IMAGE_NAME:$IMAGE_TAG -n three-tier'
             }
         }
     }
 
     post {
         always {
-            echo 'Cleaning up...'
+            echo 'Cleaning up Docker credentials...'
             sh 'docker logout'
         }
     }
