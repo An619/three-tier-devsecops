@@ -1,6 +1,9 @@
 import axios from "axios";
-const apiUrl = process.env.REACT_APP_BACKEND_URL //"http://localhost:8080/api/tasks";
-console.log(apiUrl)
+
+// During Docker build, REACT_APP_BACKEND_URL will be set to "/api/tasks"
+// For local npm start, it falls back to localhost:3500
+const apiUrl = process.env.REACT_APP_BACKEND_URL || "http://localhost:3500/api/tasks";
+
 export function getTasks() {
     return axios.get(apiUrl);
 }

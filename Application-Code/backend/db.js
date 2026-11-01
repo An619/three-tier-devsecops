@@ -2,6 +2,9 @@ const mongoose = require("mongoose");
 
 module.exports = async () => {
     try {
+        // Suppress the Mongoose strictQuery deprecation warning
+        mongoose.set('strictQuery', false); 
+
         const connectionParams = {
             useNewUrlParser: true,
             useUnifiedTopology: true,
