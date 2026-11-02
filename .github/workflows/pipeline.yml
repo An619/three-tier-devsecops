@@ -27,9 +27,11 @@ jobs:
         with:
           image-ref: 'an619/three-tier-backend:latest'
           format: 'table'
-          exit-code: '1' # Fail the pipeline if vulnerabilities are found
-          ignore-unfixed: true # Only report vulnerabilities that have a known fix
+          exit-code: '1' 
+          ignore-unfixed: true 
           severity: 'CRITICAL,HIGH'
+          # Ignore global npm/yarn tools. We only care about OS and app vulnerabilities.
+          skip-dirs: 'usr/local/lib/node_modules,opt/yarn-v1.22.22'
 
       # --- Frontend Phase ---
       - name: Build Frontend Image Locally
@@ -43,6 +45,7 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
           severity: 'CRITICAL,HIGH'
+          skip-dirs: 'usr/local/lib/node_modules,opt/yarn-v1.22.22'
 
       # --- Deployment Phase (Only runs if scans pass) ---
       - name: Log in to Docker Hub
