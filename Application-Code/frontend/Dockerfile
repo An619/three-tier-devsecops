@@ -13,6 +13,9 @@ RUN npm run build
 # --- Stage 2: Serve the App with Nginx ---
 FROM nginx:stable-alpine
 
+# PATCH: Upgrade OS packages to fix Alpine CVEs
+RUN apk update && apk upgrade --no-cache
+
 # Create and set permissions for the directory Nginx needs to write to
 RUN touch /var/run/nginx.pid \
     && chown -R nginx:nginx /var/cache/nginx /var/run/nginx.pid
